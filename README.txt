@@ -27,6 +27,23 @@ It cannot migrate ticket ownership to GitHub Issue "Assignee" since we
 have no way to map customer-specific Trac usernames into global GitHub
 usernames.
 
+Extra metadata added to GitHub issues
+-------------------------------------
+
+I modified this script for my particular use in a way that probably
+won't be useful outside my organization.  This adds the following info
+to the description of each issue:
+ * original owner
+ * original reporter
+ * original date reported
+ * URL of the original trac ticket
+
+The URL is hard-coded into the script, with only the trac ticket ID
+replaced in it.  For us, this is
+'http://code.ros.org/trac/ros-pkg/ticket/%d'.  Others here will need
+to change ros-pkg to something else, and others in the world at large
+will need to change the URL entirely.
+
 Testing out migration
 ---------------------
 
