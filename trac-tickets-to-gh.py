@@ -1,19 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# Migrate trac tickets from DB into GitHub using v3 API.
-# Transform milestones to milestones, components to labels.
-# The code merges milestones and labels does NOT attempt to prevent
-# duplicating tickets so you'll get multiples if you run repeatedly.
-# See API docs: http://developer.github.com/v3/issues/
-
-# TODO:
-# - it's not getting ticket *changes* from 'comments', like milestone changed.
-# - should I be migrating Trac 'keywords' to Issue 'labels'?
-# - list Trac users, get GitHub collaborators, define a mapping for issue assignee.
-# - the Trac style ticket refs like 'see #37' will ref wrong GitHub issue since numbers change
+# Migrate trac tickets for a given "component" from DB into GitHub using v3 API.
+# Transforms milestones to milestones, priority and type to labels.
+# The code does NOT attempt to prevent duplicating tickets so you'll
+# get multiples if you run repeatedly.  See API docs:
+# http://developer.github.com/v3/issues/
 
 import datetime
-# TODO: conditionalize and use 'json'
 import logging
 from optparse import OptionParser
 import sqlite3
@@ -28,8 +21,7 @@ class Trac(object):
         try:
             self.conn = sqlite3.connect(self.trac_db_path)
         except sqlite3.OperationalError, e:
-            raise RuntimeError("Could not open trac db=%s e=%s" % (
-                    self.trac_db_path, e))
+            raise RuntimeError("Could not open trac db=%s e=%s" % (self.trac_db_path, e))
 
     def sql(self, sql_query):
         """Create a new connection, send the SQL query, return response.
@@ -44,7 +36,7 @@ class Trac(object):
 
 # Warning: optparse is deprecated in python-2.7 in favor of argparse
 usage = """
-  %prog [options] trac_db_path github_username github_password github_repo
+  %prog [options] trac_db_path trac_component github_username github_password github_repo
 
   The path might be something like "/tmp/trac.db"
   The github_repo combines user or organization and specific repo like "myorg/myapp"
@@ -55,7 +47,7 @@ parser.add_option('-q', '--quiet', action="store_true", default=False,
 
 (options, args) = parser.parse_args()
 try:
-    [trac_db_path, github_username, github_password, github_repo] = args
+    [trac_db_path, trac_component, github_username, github_password, github_repo] = args
 except ValueError:
     parser.error('Wrong number of arguments')
 if not '/' in github_repo:
@@ -72,18 +64,18 @@ github = GitHub(github_username, github_password, github_repo)
 # Show the Trac usernames assigned to tickets as an FYI
 
 logging.info("Getting Trac ticket owners (will NOT be mapped to GitHub username)...")
-for (username,) in trac.sql('SELECT DISTINCT owner FROM ticket'):
+for (username,) in trac.sql('SELECT DISTINCT owner FROM ticket WHERE component="%s"' % trac_component):
     if username:
         username = username.strip() # username returned is tuple like: ('phred',)
         logging.debug("Trac ticket owner: %s" % username)
 
 
-# Get GitHub labels; we'll merge Trac components into them
+# Get GitHub labels; we'll merge Trac priorities and types into them
 
 logging.info("Getting existing GitHub labels...")
-labels = {}
+gh_labels = {}
 for label in github.labels():
-    labels[label['name']] = label['url'] # ignoring 'color'
+    gh_labels[label['name']] = True
     logging.debug("label name=%s" % label['name'])
 
 # Get any existing GitHub milestones so we can merge Trac into them.
@@ -118,35 +110,52 @@ for name, description, due, completed in milestones:
                      'description': description,
                      }
         if due:
-            milestone['due_on'] = datetime.datetime.fromtimestamp(
-                due / 1000 / 1000).isoformat()
+            milestone['due_on'] = datetime.datetime.fromtimestamp( due ).isoformat()
         logging.debug("milestone: %s" % milestone)
         gh_milestone = github.milestones(data=milestone)
         milestone_id['name'] = gh_milestone['number']
 
 # Copy Trac tickets to GitHub issues, keyed to milestones above
 
-tickets = trac.sql('SELECT id, summary, description , owner, milestone, component, status FROM ticket ORDER BY id') # LIMIT 5
-for tid, summary, description, owner, milestone, component, status in tickets:
+tickets = trac.sql('SELECT id, priority, type, summary, description, owner, reporter, milestone, time, status FROM ticket WHERE component="%s" ORDER BY id' % trac_component) # LIMIT 5
+for tid, priority, ticket_type, summary, description, owner, reporter, milestone, timestamp, status in tickets:
+    summary += "  (ros-pkg ticket #%d)" % tid
+    labels = []
+    if ticket_type == "defect":
+        ticket_type = "bug";
+    if ticket_type:
+        labels.append( ticket_type )
+    if priority:
+        labels.append( priority )
+
+    if ticket_type not in gh_labels:
+        logging.info( "Adding label %s" % ticket_type )
+        github.labels( data = { 'name': ticket_type })
+        gh_labels[ ticket_type ] = True
+    if priority not in gh_labels:
+        logging.info( "Adding label %s" % priority )
+        github.labels( data = { 'name': priority })
+        gh_labels[ priority ] = True
+
     logging.info("Ticket %d: %s" % (tid, summary))
     if description:
         description = description.strip()
     if milestone:
         milestone = milestone.strip()
     issue = {'title': summary}
+    issue['labels'] = labels
     if description:
+        description += "\n\n"
+        description += "trac data:\n"
+        description += " * Owner: **%s**\n" % owner
+        description += " * Reporter: **%s**\n" % reporter
+        description += " * Reported at: **%s**\n" % datetime.datetime.fromtimestamp( timestamp ).ctime()
+        description += " * URL: http://code.ros.org/trac/ros-pkg/ticket/%d" % tid
         issue['body'] = description
     if milestone:
         m = milestone_id.get(milestone)
         if m:
             issue['milestone'] = m
-    if component:
-        if component not in labels:
-            # GitHub creates the 'url' and 'color' fields for us
-            github.labels(data={'name': component})
-            labels[component] = 'CREATED' # keep track of it so we don't re-create it
-            logging.debug("adding component as new label=%s" % component)
-        issue['labels'] = [component]
     # We have to create/map Trac users to GitHub usernames before we can assign
     # them to tickets; don't see how to do that conveniently now.
     # if owner.strip():
