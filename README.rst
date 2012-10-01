@@ -1,7 +1,9 @@
 Migrate Trac Tickets to GitHub Issues
 =====================================
 
-The "migrate.py" script copies Trac tickets into GitHub Issues.
+The "migrate.py" script copies Trac tickets into GitHub Issues.  It
+pulls issues from the sqlite database file used by Trac (or ideally a
+copy of that file), and uses the GitHub API to post them.
 
 It will optionaly create and merge "Milestones".
 
