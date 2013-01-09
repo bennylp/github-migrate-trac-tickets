@@ -52,6 +52,11 @@ parser.add_option('-q', '--quiet', action="store_true", default=False,
 parser.add_option('-m', '--milestones', action="store_true", default=False,
                   help='Migrate trac milestones to github milestones')
 
+parser.add_option('--open', dest='only_open', action='store_true', default=False,
+                  help="Only migrate open tickets")
+parser.add_option('--component-name', dest='component_name', action='store_true', default=False,
+                  help="Prepend the summary with the component name")
+
 (options, args) = parser.parse_args()
 try:
     [trac_db_path, trac_url, trac_component, github_username, github_password, github_repo] = args
@@ -132,7 +137,15 @@ if options.milestones:
 
 tickets = trac.sql('SELECT id, priority, type, summary, description, owner, reporter, milestone, time, status FROM ticket WHERE component="%s" ORDER BY id' % trac_component) # LIMIT 5
 for tid, priority, ticket_type, summary, description, owner, reporter, milestone, timestamp, status in tickets:
-    summary += "  (ros-pkg ticket #%d)" % tid
+    
+    # If requested only syncronize open issues, so skip closed tickets
+    if options.only_open and status == 'closed':
+        continue
+    
+    if options.component_name:
+        summary = trac_component+ ": " + summary
+
+    summary += "  (ros ticket #%d)" % tid
     labels = []
     if ticket_type == "defect":
         ticket_type = "bug";
