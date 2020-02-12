@@ -8,7 +8,7 @@
 
 import os
 import sys
-import datetime
+from datetime import datetime, timedelta
 import logging
 from optparse import OptionParser
 import sqlite3
@@ -82,10 +82,11 @@ github = GitHub(github_username, github_password, github_repo)
 # Show the Trac usernames assigned to tickets as an FYI
 
 logging.info("Getting Trac ticket owners (will NOT be mapped to GitHub username)...")
-for (username,) in trac.sql('SELECT DISTINCT owner FROM ticket WHERE component="%s"' % trac_component):
+for (username,) in trac.sql('SELECT DISTINCT owner FROM ticket WHERE component LIKE "%s"' % trac_component):
     if username:
         username = username.strip() # username returned is tuple like: ('phred',)
         logging.debug("Trac ticket owner: %s" % username)
+        logging.debug("Trac component: %s" % trac_component)
 
 # Get GitHub labels; we'll merge Trac priorities and types into them
 
@@ -128,24 +129,25 @@ if options.milestones:
                          'description': description,
                          }
             if due:
-                milestone['due_on'] = datetime.datetime.fromtimestamp( due ).isoformat()
+                milestonedue = datetime(1970, 1, 1) + timedelta(microseconds=due)
+                milestone['due_on'] = milestonedue.isoformat()
             logging.debug("milestone: %s" % milestone)
             gh_milestone = github.milestones(data=milestone)
             milestone_id['name'] = gh_milestone['number']
 
 # Copy Trac tickets to GitHub issues, optionally keyed to milestones above
-
-tickets = trac.sql('SELECT id, priority, type, summary, description, owner, reporter, milestone, time, status FROM ticket WHERE component="%s" ORDER BY id' % trac_component) # LIMIT 5
-for tid, priority, ticket_type, summary, description, owner, reporter, milestone, timestamp, status in tickets:
-    
+logging.debug("Copy Trac tickets to GitHub issues, optionally keyed to milestones above")
+tickets = trac.sql('SELECT id, priority, type, summary, description, owner, reporter, milestone, time, status, component FROM ticket WHERE component LIKE "%s" ORDER BY id' % trac_component) # LIMIT 5
+for tid, priority, ticket_type, summary, description, owner, reporter, milestone, timestamp, status, component in tickets:
     # If requested only syncronize open issues, so skip closed tickets
     if options.only_open and status == 'closed':
         continue
     
+    logging.debug("Ticket component: %s", component)
     if options.component_name:
         summary = trac_component+ ": " + summary
 
-    summary += "  (ros ticket #%d)" % tid
+    summary += "  (ticket #%d)" % tid
     labels = []
     if ticket_type == "defect":
         ticket_type = "bug";
@@ -175,7 +177,11 @@ for tid, priority, ticket_type, summary, description, owner, reporter, milestone
         description += "trac data:\n"
         description += " * Owner: **%s**\n" % owner
         description += " * Reporter: **%s**\n" % reporter
-        description += " * Reported at: **%s**\n" % datetime.datetime.fromtimestamp( timestamp ).ctime()
+        logging.debug("Timestamp: %s", timestamp)
+        ticketdate = datetime(1970, 1, 1) + timedelta(microseconds=timestamp)
+        logging.debug("Ticket date: %s", ticketdate)
+        logging.debug("Ticket friendly date: %s", ticketdate.ctime())
+        description += " * Reported at: **%s**\n" % ticketdate.ctime()
         description += " * URL: %s/ticket/%d" % (trac_url, tid)
         issue['body'] = description
     if milestone and options.milestones:
